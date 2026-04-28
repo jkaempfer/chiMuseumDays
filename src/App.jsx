@@ -4,9 +4,9 @@ import {
   CalendarDays, Star, ExternalLink, Baby, Loader2, AlertTriangle, 
   Info, Navigation, Mail, CheckCircle2, BellRing, CircleDollarSign 
 } from 'lucide-react';
+import museumsData from './data.json';
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwtB7UoFLbJL-pfvA0C_4srymdlTz5MEZaLnRWGFGv3bFsWcuT0Vzdm6DixGZQ80H-_Vg/exec";
-const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT-5D6tDErRDgeZnLlm4qR6c_M2FrxdFmUoDJyemEHawkfn-ZHbMHKBYSOhN8NcheKaJipvj5vcpSjR/pub?output=csv"; 
 
 const CATEGORIES = {
   'Art': { color: 'bg-purple-100 text-purple-700 border-purple-200', emoji: '🎨' },
@@ -59,62 +59,32 @@ export default function App() {
     return { type: 'none', label: `$${museum.basePrice}`, fullLabel: '' };
   };
 
-  const parseCSVLine = (text) => {
-    const result = [];
-    let cur = '';
-    let inQuote = false;
-    for (let n = 0; n < text.length; n++) {
-      const char = text[n];
-      if (char === '"') {
-        if (inQuote && text[n + 1] === '"') { cur += '"'; n++; } 
-        else { inQuote = !inQuote; }
-      } else if (char === ',' && !inQuote) {
-        result.push(cur.trim()); cur = '';
-      } else { cur += char; }
-    }
-    result.push(cur.trim());
-    return result;
-  };
-
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const response = await fetch(SHEET_URL);
-        const text = await response.text();
-        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-        const dataRows = lines.slice(1);
-        const parsedData = dataRows.map((line, index) => {
-          const clean = parseCSVLine(line);
-          let admissionData = { always_free: false, always_free_groups: [], free_days: [] };
-          try { admissionData = JSON.parse(clean[10] || '{}').admission || admissionData; } catch (e) {}
-          let scheduleMap = {};
-          admissionData.free_days.forEach(fd => { scheduleMap[fd.date] = fd.eligibility; });
+    try {
+      const parsedData = museumsData.map((museum, index) => {
+        const admissionData = museum.admission || { always_free: false, always_free_groups: [], free_days: [] };
+        const scheduleMap = {};
+        admissionData.free_days?.forEach(fd => { scheduleMap[fd.date] = fd.eligibility; });
 
-          return {
-            id: clean[0] || `m-${index}`,
-            name: clean[1],
-            type: clean[2],
-            mustSee: clean[3]?.toLowerCase() === 'true',
-            isKidFriendly: clean[4]?.toLowerCase() === 'true',
-            neighborhood: clean[5],
-            address: clean[6],
-            image: clean[7],
-            basePrice: Number(clean[8]) || 0,
-            description: (clean[9] || "").replace(/^"|"$/g, ''),
-            alwaysFree: admissionData.always_free,
-            alwaysFreeGroups: admissionData.always_free_groups || [],
-            scheduledFreeDays: admissionData.free_days || [],
-            scheduleMap,
-            url: clean[11],
-            rating: clean[12] ? Number(clean[12]) : 0,
-          };
-        }).filter(m => m.name);
-        setMuseums(parsedData);
-        setLoading(false);
-        if (!localStorage.getItem('chicago-museums-visited')) setShowWelcome(true);
-      } catch (err) { setError("Failed to sync data."); setLoading(false); }
+        return {
+          ...museum,
+          id: museum.id || `m-${index}`,
+          basePrice: Number(museum.basePrice) || 0,
+          alwaysFree: admissionData.always_free || false,
+          alwaysFreeGroups: admissionData.always_free_groups || [],
+          scheduledFreeDays: admissionData.free_days || [],
+          scheduleMap,
+          rating: museum.rating ? Number(museum.rating) : 0,
+        };
+      }).filter(m => m.name);
+
+      setMuseums(parsedData);
+      if (!localStorage.getItem('chicago-museums-visited')) setShowWelcome(true);
+    } catch (err) {
+      setError("Failed to read local data.");
+    } finally {
+      setLoading(false);
     }
-    fetchData();
   }, []);
   
   const filteredMuseums = useMemo(() => {
