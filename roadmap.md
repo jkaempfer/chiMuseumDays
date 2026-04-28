@@ -1,3 +1,5 @@
+https://chimuseumdays.jkaempfer.workers.dev/
+
 << CHICAGO FREE MUSEUM FINDER: STRATEGIC ROADMAP >>
 
 *** PRIORITY 1: PERSONALIZATION & INTELLIGENCE ***
