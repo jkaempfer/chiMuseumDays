@@ -1,12 +1,25 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  Calendar, MapPin, Search, X, LayoutGrid, ChevronLeft, ChevronRight, 
-  CalendarDays, Star, ExternalLink, Baby, Loader2, AlertTriangle, 
-  Info, Navigation, Mail, CheckCircle2, BellRing, CircleDollarSign 
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  Calendar, MapPin, Search, X, LayoutGrid, ChevronLeft, ChevronRight,
+  CalendarDays, Star, ExternalLink, Baby, Navigation, CheckCircle2, CircleDollarSign
 } from 'lucide-react';
+import rawData from './data.json';
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwtB7UoFLbJL-pfvA0C_4srymdlTz5MEZaLnRWGFGv3bFsWcuT0Vzdm6DixGZQ80H-_Vg/exec";
-const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT-5D6tDErRDgeZnLlm4qR6c_M2FrxdFmUoDJyemEHawkfn-ZHbMHKBYSOhN8NcheKaJipvj5vcpSjR/pub?output=csv"; 
+
+const museums = rawData.map(m => {
+  const { admission: raw, ...rest } = m;
+  const admission = raw || { always_free: false, always_free_groups: [], free_days: [] };
+  const scheduleMap = {};
+  (admission.free_days || []).forEach(fd => { scheduleMap[fd.date] = fd.eligibility; });
+  return {
+    ...rest,
+    alwaysFree: admission.always_free,
+    alwaysFreeGroups: admission.always_free_groups || [],
+    scheduledFreeDays: admission.free_days || [],
+    scheduleMap,
+  };
+});
 
 const CATEGORIES = {
   'Art': { color: 'bg-purple-100 text-purple-700 border-purple-200', emoji: '🎨' },
@@ -31,20 +44,24 @@ const ChicagoFlag = ({ className }) => (
 );
 
 export default function App() {
-  const [museums, setMuseums] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [museumType, setMuseumType] = useState('All');
   const [filterMustSee, setFilterMustSee] = useState(false);
   const [filterKidFriendly, setFilterKidFriendly] = useState(false);
-  const [filterFreeOnly, setFilterFreeOnly] = useState(false);
+  const [filterFreeOnly, setFilterFreeOnly] = useState(true);
   const [search, setSearch] = useState('');
   const [activeView, setActiveView] = useState('today'); 
   const [selectedMuseum, setSelectedMuseum] = useState(null);
-  const [calendarOffset, setCalendarOffset] = useState(0); 
   const [calendarBaseDate, setCalendarBaseDate] = useState(new Date());
   const [activeCellDetail, setActiveCellDetail] = useState(null);
-  const [showWelcome, setShowWelcome] = useState(false);
+  const [calendarTooltip, setCalendarTooltip] = useState(null);
+  const [showWelcome, setShowWelcome] = useState(!localStorage.getItem('chicago-museums-visited'));
+
+  useEffect(() => {
+    if (!calendarTooltip) return;
+    const close = () => { setActiveCellDetail(null); setCalendarTooltip(null); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [calendarTooltip]);
 
   const now = new Date();
 
@@ -58,64 +75,6 @@ export default function App() {
     if (museum.scheduleMap?.[isoStr]) return { type: 'limited', label: 'CHECK FREE', fullLabel: museum.scheduleMap[isoStr] };
     return { type: 'none', label: `$${museum.basePrice}`, fullLabel: '' };
   };
-
-  const parseCSVLine = (text) => {
-    const result = [];
-    let cur = '';
-    let inQuote = false;
-    for (let n = 0; n < text.length; n++) {
-      const char = text[n];
-      if (char === '"') {
-        if (inQuote && text[n + 1] === '"') { cur += '"'; n++; } 
-        else { inQuote = !inQuote; }
-      } else if (char === ',' && !inQuote) {
-        result.push(cur.trim()); cur = '';
-      } else { cur += char; }
-    }
-    result.push(cur.trim());
-    return result;
-  };
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const response = await fetch(SHEET_URL);
-        const text = await response.text();
-        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-        const dataRows = lines.slice(1);
-        const parsedData = dataRows.map((line, index) => {
-          const clean = parseCSVLine(line);
-          let admissionData = { always_free: false, always_free_groups: [], free_days: [] };
-          try { admissionData = JSON.parse(clean[10] || '{}').admission || admissionData; } catch (e) {}
-          let scheduleMap = {};
-          admissionData.free_days.forEach(fd => { scheduleMap[fd.date] = fd.eligibility; });
-
-          return {
-            id: clean[0] || `m-${index}`,
-            name: clean[1],
-            type: clean[2],
-            mustSee: clean[3]?.toLowerCase() === 'true',
-            isKidFriendly: clean[4]?.toLowerCase() === 'true',
-            neighborhood: clean[5],
-            address: clean[6],
-            image: clean[7],
-            basePrice: Number(clean[8]) || 0,
-            description: (clean[9] || "").replace(/^"|"$/g, ''),
-            alwaysFree: admissionData.always_free,
-            alwaysFreeGroups: admissionData.always_free_groups || [],
-            scheduledFreeDays: admissionData.free_days || [],
-            scheduleMap,
-            url: clean[11],
-            rating: clean[12] ? Number(clean[12]) : 0,
-          };
-        }).filter(m => m.name);
-        setMuseums(parsedData);
-        setLoading(false);
-        if (!localStorage.getItem('chicago-museums-visited')) setShowWelcome(true);
-      } catch (err) { setError("Failed to sync data."); setLoading(false); }
-    }
-    fetchData();
-  }, []);
   
   const filteredMuseums = useMemo(() => {
     return museums
@@ -137,10 +96,10 @@ export default function App() {
   const calendarDates = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(calendarBaseDate);
-      d.setDate(calendarBaseDate.getDate() + i + (calendarOffset * 7));
+      d.setDate(calendarBaseDate.getDate() + i);
       return d;
     });
-  }, [calendarOffset, calendarBaseDate]);
+  }, [calendarBaseDate]);
 
   const handleSubscribe = async (email, source) => {
     try {
@@ -156,8 +115,6 @@ export default function App() {
       return false;
     }
   };
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-10 h-10 text-indigo-600 animate-spin" /></div>;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12 font-sans flex flex-col overflow-x-hidden">
@@ -186,7 +143,7 @@ export default function App() {
             <div className="flex gap-2 mr-4 border-r border-slate-200 pr-4 flex-wrap">
                 <button onClick={() => setFilterMustSee(!filterMustSee)} className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-black rounded-full border transition-all uppercase ${filterMustSee ? 'bg-yellow-400 border-yellow-500 text-yellow-950 shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}><Star className={`w-3 h-3 ${filterMustSee ? 'fill-current' : ''}`} /> Must See</button>
                 <button onClick={() => setFilterKidFriendly(!filterKidFriendly)} className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-black rounded-full border transition-all uppercase ${filterKidFriendly ? 'bg-blue-600 border-blue-700 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}><Baby className="w-3 h-3" /> Kids</button>
-                <button onClick={() => setFilterFreeOnly(!filterFreeOnly)} className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-black rounded-full border transition-all uppercase ${filterFreeOnly ? 'bg-emerald-600 border-emerald-700 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}><CircleDollarSign className="w-3 h-3" /> Free Today</button>
+                <button onClick={() => setFilterFreeOnly(!filterFreeOnly)} className={`flex items-center gap-1.5 px-4 py-1.5 text-[11px] font-black rounded-full border transition-all uppercase ${filterFreeOnly ? 'bg-emerald-600 border-emerald-700 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500'}`}><CircleDollarSign className="w-3 h-3" /> Free</button>
             </div>
             <div className="flex gap-2 flex-wrap justify-center">
               {Object.keys(CATEGORIES).map(type => (
@@ -200,7 +157,30 @@ export default function App() {
             {filteredMuseums.map((m) => <MuseumCard key={m.id} museum={m} view={activeView} getStatusForDate={getStatusForDate} onOpenDetail={() => setSelectedMuseum(m)} />)}
           </div>
         ) : (
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden overflow-x-auto">
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setCalendarBaseDate(prev => { const d = new Date(prev); d.setDate(d.getDate() - 7); return d; })}
+                className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 shadow-sm"
+              ><ChevronLeft size={16} /></button>
+              <input
+                type="date"
+                value={`${calendarDates[0].getFullYear()}-${String(calendarDates[0].getMonth()+1).padStart(2,'0')}-${String(calendarDates[0].getDate()).padStart(2,'0')}`}
+                onChange={(e) => { const [y,m,d] = e.target.value.split('-').map(Number); setCalendarBaseDate(new Date(y,m-1,d)); }}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+              />
+              <button
+                onClick={() => setCalendarBaseDate(prev => { const d = new Date(prev); d.setDate(d.getDate() + 7); return d; })}
+                className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 shadow-sm"
+              ><ChevronRight size={16} /></button>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                {calendarDates[0].toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </span>
+            </div>
+          <div
+            className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-auto max-h-[65vh]"
+            onScroll={() => { setActiveCellDetail(null); setCalendarTooltip(null); }}
+          >
                 <table className="w-full text-left border-collapse min-w-[800px]">
                   <thead className="sticky top-0 z-[60] bg-slate-50 border-b border-slate-200 shadow-sm">
                     <tr>
@@ -208,7 +188,8 @@ export default function App() {
                       {calendarDates.map((date, i) => (
                         <th key={i} className={`p-3 text-center border-r border-slate-200 last:border-r-0 ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-indigo-50/40' : ''}`}>
                           <p className="text-lg font-black text-slate-800 leading-none">{date.getDate()}</p>
-                          <p className="text-[9px] font-bold text-indigo-500 uppercase mt-1">{date.toLocaleDateString('en-US', { weekday: 'short' })}</p>
+                          <p className="text-[9px] font-bold text-indigo-500 uppercase mt-0.5">{date.toLocaleDateString('en-US', { month: 'short' })}</p>
+                          <p className="text-[8px] font-bold text-slate-400 uppercase">{date.toLocaleDateString('en-US', { weekday: 'short' })}</p>
                         </th>
                       ))}
                     </tr>
@@ -227,17 +208,26 @@ export default function App() {
                         </td>
                         {calendarDates.map((date, i) => {
                           const status = getStatusForDate(m, date);
-                          const isSelected = activeCellDetail === `${m.id}-${i}`;
+                          const cellKey = `${m.id}-${i}`;
+                          const isSelected = activeCellDetail === cellKey;
                           return (
                             <td key={i} className="p-1 border-r border-slate-100 last:border-r-0">
-                              <div onClick={() => status.type !== 'none' && setActiveCellDetail(isSelected ? null : `${m.id}-${i}`)} className={`h-12 rounded-lg flex flex-col items-center justify-center p-1 transition-all relative ${status.type !== 'none' ? 'cursor-pointer' : ''} ${status.type === 'always' ? 'bg-emerald-600 text-white shadow-sm' : status.type === 'limited' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-slate-50 text-slate-300'}`}>
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (status.type === 'none') return;
+                                  if (isSelected) {
+                                    setActiveCellDetail(null);
+                                    setCalendarTooltip(null);
+                                  } else {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setActiveCellDetail(cellKey);
+                                    setCalendarTooltip({ content: status.fullLabel, x: rect.left + rect.width / 2, y: rect.top });
+                                  }
+                                }}
+                                className={`h-12 rounded-lg flex flex-col items-center justify-center p-1 transition-all ${status.type !== 'none' ? 'cursor-pointer' : ''} ${status.type === 'always' ? 'bg-emerald-600 text-white shadow-sm' : status.type === 'limited' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-slate-50 text-slate-300'} ${isSelected ? 'ring-2 ring-slate-900' : ''}`}
+                              >
                                 <span className="text-[8px] uppercase font-black text-center leading-tight">{status.label}</span>
-                                {isSelected && (
-                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-900 text-white p-3 rounded-xl z-[100] text-[9px] font-bold shadow-2xl animate-in zoom-in-95">
-                                    <p className="leading-relaxed">{status.fullLabel}</p>
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
-                                  </div>
-                                )}
                               </div>
                             </td>
                           );
@@ -247,15 +237,25 @@ export default function App() {
                   </tbody>
                 </table>
           </div>
+          </div>
         )}
       </main>
 
+      {calendarTooltip && (
+        <div
+          style={{ position: 'fixed', left: calendarTooltip.x, top: calendarTooltip.y - 8, transform: 'translate(-50%, -100%)', zIndex: 500 }}
+          className="w-52 bg-slate-900 text-white p-3 rounded-xl text-[9px] font-bold shadow-2xl pointer-events-none"
+        >
+          <p className="leading-relaxed">{calendarTooltip.content}</p>
+          <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
+        </div>
+      )}
       {selectedMuseum && <MuseumDetailModal museum={selectedMuseum} onClose={() => setSelectedMuseum(null)} getStatusForDate={getStatusForDate} onNavigate={(dir) => {
         const idx = filteredMuseums.findIndex(m => m.id === selectedMuseum.id);
         const next = (idx + dir + filteredMuseums.length) % filteredMuseums.length;
         setSelectedMuseum(filteredMuseums[next]);
       }} onSubscribe={handleSubscribe} />}
-      {showWelcome && <WelcomeModal freeCount={museums.filter(m => getStatusForDate(m, now).type !== 'none').length} totalCount={museums.length} onClose={() => setShowWelcome(false)} onSubscribe={handleSubscribe} />}
+      {showWelcome && <WelcomeModal freeCount={museums.filter(m => getStatusForDate(m, now).type !== 'none').length} totalCount={museums.length} onClose={() => { localStorage.setItem('chicago-museums-visited', 'true'); setShowWelcome(false); }} onSubscribe={handleSubscribe} />}
     </div>
   );
 }
@@ -295,6 +295,12 @@ function MuseumDetailModal({ museum, onClose, getStatusForDate, onNavigate, onSu
   const [expandGroups, setExpandGroups] = useState(false);
   const [expandDays, setExpandDays] = useState(false);
   const [activeCellDetail, setActiveCellDetail] = useState(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   const nextFreeDateObj = useMemo(() => {
     if (museum.alwaysFree) return null;
@@ -340,8 +346,13 @@ function MuseumDetailModal({ museum, onClose, getStatusForDate, onNavigate, onSu
                     </div>
                     <div className="bg-emerald-50/50 p-4 rounded-3xl border border-emerald-100/50">
                         <h4 className="text-[10px] font-black text-emerald-700 uppercase mb-3">upcoming free dates:</h4>
-                        <ul className="space-y-1.5"> 
-                          {museum.scheduledFreeDays?.slice(0, expandDays ? 99 : 5).map((fd, i) => <li key={i} className="text-[11px] text-slate-600 flex items-start gap-2"><div className="w-1 h-1 bg-emerald-400 rounded-full mt-1.5 shrink-0" /> {new Date(fd.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</li>)} 
+                        <ul className="space-y-1.5">
+                          {museum.scheduledFreeDays?.slice(0, expandDays ? 99 : 5).map((fd, i) => (
+                            <li key={i} className="text-[11px] text-slate-600 flex items-start gap-2">
+                              <div className="w-1 h-1 bg-emerald-400 rounded-full mt-1.5 shrink-0" />
+                              <span className="font-bold">{new Date(fd.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>{fd.eligibility && <span className="text-[9px] text-slate-300 font-normal ml-1">{fd.eligibility}</span>}
+                            </li>
+                          ))}
                           {!expandDays && museum.scheduledFreeDays?.length > 5 && <button onClick={() => setExpandDays(true)} className="text-[10px] font-black text-emerald-600 uppercase mt-1">+ {museum.scheduledFreeDays.length - 5} more</button>}
                         </ul>
                     </div>

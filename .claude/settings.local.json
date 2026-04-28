@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node download-images.mjs)",
+      "Bash(node -e \"const d = require\\('./src/data.json'\\); const remote = d.filter\\(m => m.image && !m.image.startsWith\\('/images/'\\)\\); console.log\\('Remote URLs remaining:', remote.length, remote.map\\(m=>m.id\\)\\)\")"
+    ]
+  }
+}
