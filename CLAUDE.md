@@ -17,20 +17,24 @@
 ## Data shape
 
 ### src/data.json (raw)
-Each museum entry has top-level fields plus an `admission` object:
+Each museum entry has top-level fields plus an `admission` object, and closed days arrays:
 ```
 admission.always_free         bool
 admission.always_free_groups  [{category, link}]
 admission.free_days           [{date, eligibility, link}]  — date is ISO "YYYY-MM-DD"
+closedDays                    [string] — array of ISO "YYYY-MM-DD" specific dates
+closedRecurring               [string] — array of weekday names (e.g., "Monday")
 ```
 
 ### Post-transform (what components receive)
-The module-level transform in App.jsx flattens admission into:
+The module-level transform in App.jsx flattens admission and maps closed dates into:
 ```
 alwaysFree          bool
 alwaysFreeGroups    [{category, link}]
 scheduledFreeDays   [{date, eligibility, link}]
-scheduleMap         { "YYYY-MM-DD": eligibility }   — for O(1) date lookup
+scheduleMap         { "YYYY-MM-DD": eligibility }   — for O(1) free date lookup
+closedMap           { "YYYY-MM-DD": true }          — for O(1) closed date lookup
+closedRecurring     [string]                        — carried over directly
 ```
 Plus all original fields: `id`, `name`, `type`, `mustSee`, `isKidFriendly`, `neighborhood`, `address`, `image`, `basePrice`, `url`, `rating`.
 
@@ -39,6 +43,7 @@ Plus all original fields: `id`, `name`, `type`, `mustSee`, `isKidFriendly`, `nei
 - **Filter label**: the free filter button reads "Free" (not "Free Today")
 - **Welcome modal**: shown once per browser; `onClose` writes `localStorage.setItem('chicago-museums-visited', 'true')` — do not remove this call
 - **ESC key**: closes `MuseumDetailModal` via `keydown` useEffect; listener cleaned up on unmount
+- **Arrow keys**: Left/Right arrows navigate `MuseumDetailModal` via `keydown` useEffect, unless typing in an `input`; listener cleaned up on unmount
 - **Eligibility in free-dates list**: inline `<span>` after the date, `text-[9px] text-slate-300` — intentionally tiny and low-contrast; do not put on a new line
 - **Calendar column headers**: three lines — large day number / short month / short weekday
 - **Calendar navigation**: ← / → arrows + native `<input type="date">` above the table; both set `calendarBaseDate` and reset `calendarOffset` to 0
@@ -48,9 +53,14 @@ Plus all original fields: `id`, `name`, `type`, `mustSee`, `isKidFriendly`, `nei
 ### Calendar table layout
 - Container: `overflow-auto max-h-[65vh]` — this makes it the vertical scroll context so `sticky top-0` on `<thead>` works correctly. Do not change to `overflow-hidden` or remove the height constraint.
 - `calendarBaseDate` + `calendarOffset` together define the visible week. Navigation always resets `calendarOffset` to 0 and moves `calendarBaseDate` — keeps them in sync.
+- **Calendar Cell Colors**: Muted scheme for clear status indication:
+  - **Always Free**: `bg-emerald-400` (muted green)
+  - **Check Free (Limited)**: `bg-emerald-100` (lighter green)
+  - **Closed**: `bg-slate-400` (muted gray)
+  - **Normal**: `bg-white` (white)
 
 ### Calendar cell tooltips
-- Use `position: fixed` (coordinates from `getBoundingClientRect`) rendered at page level to escape the container's `overflow: auto` clipping.
+- Use `position: fixed` (coordinates from `getBoundingClientRect`) rendered at page level to escape the container's `overflow: auto` clipping (this applies to both the main calendar and the modal calendar).
 - The container's `onScroll` dismisses them so they don't go stale.
 
 ### Z-index layering
@@ -59,11 +69,14 @@ Plus all original fields: `id`, `name`, `type`, `mustSee`, `isKidFriendly`, `nei
 | App header | 100 |
 | Museum detail modal | 200 |
 | Welcome modal | 300 |
-| Calendar cell tooltip | 500 |
+| Calendar cell tooltip | 9999 |
 
 ### Images
 - All images are local (`public/images/{id}.jpg`). No external image requests at runtime.
-- To refresh: add `sharp` as a dev dep, use the Wikimedia Commons API with `prop=imageinfo&iiurlwidth=800` to get rate-limit-safe thumbnail URLs (direct upload.wikimedia.org URLs are aggressively rate-limited). Fall back to Unsplash category images where Commons has nothing.
+- **UI Constraints**: The image container uses `max-w-2xl` and `h-40 md:h-48` with `object-cover`, resulting in a roughly **3.5:1 landscape ratio**.
+- **Generation Guidelines**: When generating new images, use a **16:9 landscape aspect ratio** (or wider) with centered subjects to prevent awkward vertical cropping.
+- **File Specs**: Target 800px width, JPEG format (`q=75`). 
+- To refresh/fallback: use Wikimedia Commons API (`prop=imageinfo&iiurlwidth=800`) or generate custom photorealistic images.
 
 ### Email capture
 - POSTs to `SCRIPT_URL` (Google Apps Script) with `{ email, source }` using `mode: "no-cors"`.

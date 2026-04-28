@@ -4,6 +4,16 @@ Changelog of completed work, newest first. Each entry explains what changed and 
 
 ---
 
+## 2026-04-28
+
+### Replaced low-quality and duplicate museum images
+Audited the `public/images` directory to identify and replace low-quality, generic, or duplicate fallback images (such as Unsplash category placeholders). Generated 10 new 16:9 landscape images to replace duplicates: `brookfield.jpg`, `botanic.jpg`, `lpc.jpg`, `nmma.jpg`, `dusable.jpg`, `holocaust.jpg`, `chinese.jpg`, `swedish.jpg`, `hellenic.jpg`, and `maritime.jpg`. Future image generation should target a 16:9 aspect ratio and 800px width to properly accommodate the UI's 3.5:1 landscape crop constraint.
+
+### Project architecture review
+Performed a comprehensive review of the project structure, utility scripts (for image downloading and searching), and codebase state to understand its current architecture and determine the next logical steps for further development.
+
+---
+
 ## 2026-04-27
 
 ### Audited isKidFriendly flags

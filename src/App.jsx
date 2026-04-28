@@ -8,16 +8,22 @@ import rawData from './data.json';
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwtB7UoFLbJL-pfvA0C_4srymdlTz5MEZaLnRWGFGv3bFsWcuT0Vzdm6DixGZQ80H-_Vg/exec";
 
 const museums = rawData.map(m => {
-  const { admission: raw, ...rest } = m;
+  const { admission: raw, closedDays = [], closedRecurring = [], ...rest } = m;
   const admission = raw || { always_free: false, always_free_groups: [], free_days: [] };
   const scheduleMap = {};
   (admission.free_days || []).forEach(fd => { scheduleMap[fd.date] = fd.eligibility; });
+
+  const closedMap = {};
+  closedDays.forEach(cd => { closedMap[cd] = true; });
+
   return {
     ...rest,
     alwaysFree: admission.always_free,
     alwaysFreeGroups: admission.always_free_groups || [],
     scheduledFreeDays: admission.free_days || [],
     scheduleMap,
+    closedMap,
+    closedRecurring
   };
 });
 
@@ -67,11 +73,18 @@ export default function App() {
 
   const getStatusForDate = (museum, date) => {
     if (!museum) return { type: 'none', label: '', fullLabel: '' };
-    if (museum.alwaysFree) return { type: 'always', label: 'FREE', fullLabel: 'Free Admission Always' };
+    
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     const isoStr = `${year}-${month}-${day}`;
+    
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+    if (museum.closedMap?.[isoStr] || museum.closedRecurring?.includes(dayName)) {
+      return { type: 'closed', label: 'CLOSED', fullLabel: 'Closed' };
+    }
+
+    if (museum.alwaysFree) return { type: 'always', label: 'FREE', fullLabel: 'Free Admission Always' };
     if (museum.scheduleMap?.[isoStr]) return { type: 'limited', label: 'CHECK FREE', fullLabel: museum.scheduleMap[isoStr] };
     return { type: 'none', label: `$${museum.basePrice}`, fullLabel: '' };
   };
@@ -82,7 +95,7 @@ export default function App() {
         if (search && !m.name?.toLowerCase().includes(search.toLowerCase())) return false;
         if (filterMustSee && !m.mustSee) return false;
         if (filterKidFriendly && !m.isKidFriendly) return false;
-        if (filterFreeOnly && getStatusForDate(m, now).type === 'none') return false;
+        if (filterFreeOnly && !['always', 'limited'].includes(getStatusForDate(m, now).type)) return false;
         if (museumType !== 'All' && m.type !== museumType) return false;
         return true;
       })
@@ -181,7 +194,7 @@ export default function App() {
             className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-auto max-h-[65vh]"
             onScroll={() => { setActiveCellDetail(null); setCalendarTooltip(null); }}
           >
-                <table className="w-full text-left border-collapse min-w-[800px]">
+                <table className="w-full text-left border-collapse min-w-[800px] table-fixed">
                   <thead className="sticky top-0 z-[60] bg-slate-50 border-b border-slate-200 shadow-sm">
                     <tr>
                       <th className="p-4 text-xs font-black text-slate-400 uppercase sticky left-0 bg-slate-50 z-20 w-52 border-r border-slate-200">Museum</th>
@@ -225,7 +238,7 @@ export default function App() {
                                     setCalendarTooltip({ content: status.fullLabel, x: rect.left + rect.width / 2, y: rect.top });
                                   }
                                 }}
-                                className={`h-12 rounded-lg flex flex-col items-center justify-center p-1 transition-all ${status.type !== 'none' ? 'cursor-pointer' : ''} ${status.type === 'always' ? 'bg-emerald-600 text-white shadow-sm' : status.type === 'limited' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-slate-50 text-slate-300'} ${isSelected ? 'ring-2 ring-slate-900' : ''}`}
+                                className={`h-12 rounded-lg flex flex-col items-center justify-center p-1 transition-all border ${status.type !== 'none' ? 'cursor-pointer' : ''} ${status.type === 'closed' ? 'bg-slate-400 border-slate-500 text-white shadow-sm' : status.type === 'always' ? 'bg-emerald-400 border-emerald-500 text-white shadow-sm' : status.type === 'limited' ? 'bg-emerald-100 border-emerald-200 text-emerald-800' : 'bg-white border-slate-100 text-slate-300'} ${isSelected ? 'ring-2 ring-slate-900' : ''}`}
                               >
                                 <span className="text-[8px] uppercase font-black text-center leading-tight">{status.label}</span>
                               </div>
@@ -243,7 +256,7 @@ export default function App() {
 
       {calendarTooltip && (
         <div
-          style={{ position: 'fixed', left: calendarTooltip.x, top: calendarTooltip.y - 8, transform: 'translate(-50%, -100%)', zIndex: 500 }}
+          style={{ position: 'fixed', left: calendarTooltip.x, top: calendarTooltip.y - 8, transform: 'translate(-50%, -100%)', zIndex: 9999 }}
           className="w-52 bg-slate-900 text-white p-3 rounded-xl text-[9px] font-bold shadow-2xl pointer-events-none"
         >
           <p className="leading-relaxed">{calendarTooltip.content}</p>
@@ -255,14 +268,14 @@ export default function App() {
         const next = (idx + dir + filteredMuseums.length) % filteredMuseums.length;
         setSelectedMuseum(filteredMuseums[next]);
       }} onSubscribe={handleSubscribe} />}
-      {showWelcome && <WelcomeModal freeCount={museums.filter(m => getStatusForDate(m, now).type !== 'none').length} totalCount={museums.length} onClose={() => { localStorage.setItem('chicago-museums-visited', 'true'); setShowWelcome(false); }} onSubscribe={handleSubscribe} />}
+      {showWelcome && <WelcomeModal freeCount={museums.filter(m => ['always', 'limited'].includes(getStatusForDate(m, now).type)).length} totalCount={museums.length} onClose={() => { localStorage.setItem('chicago-museums-visited', 'true'); setShowWelcome(false); }} onSubscribe={handleSubscribe} />}
     </div>
   );
 }
 
 function MuseumCard({ museum, view, getStatusForDate, onOpenDetail }) {
   const statusToday = getStatusForDate(museum, new Date());
-  const showFreeBadge = statusToday.type !== 'none';
+  const showFreeBadge = ['always', 'limited'].includes(statusToday.type);
   return (
     <div className="rounded-[2rem] shadow-sm border border-slate-200 transition-all flex flex-col h-full overflow-hidden bg-white hover:shadow-lg active:scale-[0.99] group">
       <div className={`p-6 flex-grow ${showFreeBadge ? 'bg-emerald-50/40' : ''}`}>
@@ -295,18 +308,26 @@ function MuseumDetailModal({ museum, onClose, getStatusForDate, onNavigate, onSu
   const [expandGroups, setExpandGroups] = useState(false);
   const [expandDays, setExpandDays] = useState(false);
   const [activeCellDetail, setActiveCellDetail] = useState(null);
+  const [modalTooltip, setModalTooltip] = useState(null);
 
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e) => { 
+      if (e.key === 'Escape') {
+        onClose(); 
+      } else if (e.target.tagName.toLowerCase() !== 'input') {
+        if (e.key === 'ArrowLeft') onNavigate(-1);
+        else if (e.key === 'ArrowRight') onNavigate(1);
+      }
+    };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, onNavigate]);
 
   const nextFreeDateObj = useMemo(() => {
     if (museum.alwaysFree) return null;
     for (let i = 1; i <= 180; i++) {
         const d = new Date(); d.setDate(d.getDate() + i);
-        if (getStatusForDate(museum, d).type !== 'none') return d;
+        if (['always', 'limited'].includes(getStatusForDate(museum, d).type)) return d;
     }
     return null;
   }, [museum, getStatusForDate]);
@@ -340,21 +361,26 @@ function MuseumDetailModal({ museum, onClose, getStatusForDate, onNavigate, onSu
                     <div className="bg-emerald-50/50 p-4 rounded-3xl border border-emerald-100/50">
                         <h4 className="text-[10px] font-black text-emerald-700 uppercase mb-3">always free for:</h4>
                         <ul className="space-y-1.5"> 
-                          {museum.alwaysFreeGroups?.slice(0, expandGroups ? 99 : 5).map((g, i) => <li key={i} className="text-[11px] text-slate-600 flex items-start gap-2"><div className="w-1 h-1 bg-emerald-400 rounded-full mt-1.5 shrink-0" /> {g.category}</li>)}
+                          {museum.alwaysFreeGroups?.slice(0, expandGroups ? 99 : 5).map((g, i) => <li key={i} className="text-[11px] text-slate-600 flex items-center gap-2"><div className="w-1 h-1 bg-emerald-400 rounded-full shrink-0" /> {g.category}</li>)}
                           {!expandGroups && museum.alwaysFreeGroups?.length > 5 && <button onClick={() => setExpandGroups(true)} className="text-[10px] font-black text-emerald-600 uppercase mt-1">+ {museum.alwaysFreeGroups.length - 5} more</button>}
                         </ul>
                     </div>
                     <div className="bg-emerald-50/50 p-4 rounded-3xl border border-emerald-100/50">
                         <h4 className="text-[10px] font-black text-emerald-700 uppercase mb-3">upcoming free dates:</h4>
-                        <ul className="space-y-1.5">
+                        <div className="grid grid-cols-[auto_auto_1fr] gap-x-2 gap-y-1.5 items-center">
                           {museum.scheduledFreeDays?.slice(0, expandDays ? 99 : 5).map((fd, i) => (
-                            <li key={i} className="text-[11px] text-slate-600 flex items-start gap-2">
-                              <div className="w-1 h-1 bg-emerald-400 rounded-full mt-1.5 shrink-0" />
-                              <span className="font-bold">{new Date(fd.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>{fd.eligibility && <span className="text-[9px] text-slate-300 font-normal ml-1">{fd.eligibility}</span>}
-                            </li>
+                            <React.Fragment key={i}>
+                              <div className="w-1 h-1 bg-emerald-400 rounded-full" />
+                              <span className="text-[11px] text-slate-600 font-bold whitespace-nowrap">
+                                {new Date(fd.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-normal truncate">
+                                {fd.eligibility || ''}
+                              </span>
+                            </React.Fragment>
                           ))}
-                          {!expandDays && museum.scheduledFreeDays?.length > 5 && <button onClick={() => setExpandDays(true)} className="text-[10px] font-black text-emerald-600 uppercase mt-1">+ {museum.scheduledFreeDays.length - 5} more</button>}
-                        </ul>
+                        </div>
+                        {!expandDays && museum.scheduledFreeDays?.length > 5 && <button onClick={() => setExpandDays(true)} className="text-[10px] font-black text-emerald-600 uppercase mt-2">+ {museum.scheduledFreeDays.length - 5} more</button>}
                     </div>
                 </div>}
                 {!museum.alwaysFree && nextFreeDateObj && <section className="bg-indigo-600 rounded-[2rem] p-6 text-white shadow-lg">
@@ -365,27 +391,40 @@ function MuseumDetailModal({ museum, onClose, getStatusForDate, onNavigate, onSu
                         <button disabled={subStatus === 'loading'} className="bg-white text-indigo-600 text-[11px] font-black uppercase px-6 py-3 rounded-xl hover:bg-indigo-50">{subStatus === 'loading' ? 'Saving...' : 'Remind Me'}</button>
                     </form>}
                 </section>}
-                {!museum.alwaysFree && <section className="bg-slate-50 p-5 rounded-3xl border border-slate-200 relative">
-                    <div className="flex items-center justify-between mb-4"><h4 className="text-[10px] font-black text-slate-400 uppercase">upcoming free days</h4>
+                <section className="bg-slate-50 p-5 rounded-3xl border border-slate-200 relative">
+                    <div className="flex items-center justify-between mb-4"><h4 className="text-[10px] font-black text-slate-400 uppercase">upcoming schedule</h4>
                     <div className="flex gap-1"><button onClick={() => setModalOffset(p => Math.max(0, p-1))} className="p-1.5 bg-white border rounded-lg"><ChevronLeft size={16}/></button><button onClick={() => setModalOffset(p => p+1)} className="p-1.5 bg-white border rounded-lg"><ChevronRight size={16}/></button></div></div>
                     <div className="flex gap-2 overflow-x-auto pb-4 no-scrollbar"> {modalDates.map((d, i) => { 
                         const s = getStatusForDate(museum, d);
                         const isSel = activeCellDetail === i;
-                        return <div key={i} onClick={() => s.type !== 'none' && setActiveCellDetail(isSel ? null : i)} className={`min-w-[75px] h-24 rounded-2xl flex flex-col items-center justify-center p-2 border transition-all relative cursor-pointer ${s.type === 'always' ? 'bg-emerald-600 border-emerald-500 text-white' : s.type === 'limited' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-100 text-slate-300'}`}>
+                        return <div key={i} onClick={(e) => {
+                            if (s.type === 'none') return;
+                            if (isSel) {
+                              setActiveCellDetail(null);
+                              setModalTooltip(null);
+                            } else {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setActiveCellDetail(i);
+                              setModalTooltip({ content: s.fullLabel, x: rect.left + rect.width / 2, y: rect.top });
+                            }
+                        }} className={`flex-1 min-w-[75px] h-24 rounded-2xl flex flex-col items-center justify-center p-2 border transition-all cursor-pointer ${s.type === 'closed' ? 'bg-slate-400 border-slate-500 text-white' : s.type === 'always' ? 'bg-emerald-400 border-emerald-500 text-white' : s.type === 'limited' ? 'bg-emerald-100 border-emerald-200 text-emerald-800' : 'bg-white border-slate-100 text-slate-300'}`}>
                             <span className="text-[8px] font-black uppercase opacity-60 leading-none">{d.toLocaleDateString('en-US', { weekday: 'short' })}</span>
                             <span className="text-xl font-black">{d.getDate()}</span>
                             <span className="text-[8px] font-bold uppercase opacity-60">{d.toLocaleDateString('en-US', { month: 'short' })}</span>
                             <span className="text-[8px] uppercase font-black mt-auto">{s.label}</span>
-                            {isSel && (
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-40 bg-slate-900 text-white p-3 rounded-xl z-[400] text-[9px] font-bold shadow-2xl animate-in zoom-in-95 border border-white/10">
-                                <p>{s.fullLabel}</p>
-                                <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
-                              </div>
-                            )}
                         </div>
                     })} </div>
-                </section>}
+                </section>
             </div>
+            {modalTooltip && (
+              <div
+                style={{ position: 'fixed', left: modalTooltip.x, top: modalTooltip.y - 8, transform: 'translate(-50%, -100%)', zIndex: 9999 }}
+                className="w-52 bg-slate-900 text-white p-3 rounded-xl text-[9px] font-bold shadow-2xl pointer-events-none"
+              >
+                <p className="leading-relaxed">{modalTooltip.content}</p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
+              </div>
+            )}
             <div className="flex md:hidden border-t bg-slate-50 p-2 gap-2">
                 <button onClick={() => onNavigate(-1)} className="flex-1 py-3 bg-white border rounded-xl text-[10px] font-black uppercase flex items-center justify-center gap-2"><ChevronLeft size={16}/> Previous</button>
                 <button onClick={() => onNavigate(1)} className="flex-1 py-3 bg-white border rounded-xl text-[10px] font-black uppercase flex items-center justify-center gap-2">Next <ChevronRight size={16}/></button>
